@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${APP_NAME}-deployment
+  labels:
+    app: ${APP_NAME}
+spec:
+  replicas: ${REPLICAS}
+  selector:
+    matchLabels:
+      app: ${APP_NAME}
+  template:
+    metadata:
+      labels:
+        app: ${APP_NAME}
+    spec:
+      containers:
+        - name: ${APP_NAME}
+          image: ${IMAGE_REPO}:${IMAGE_TAG}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            # pydantic-settings reads these from the env. Settings model
+            # in app/config.py needs GEMINI_API_KEY; the rest have safe
+            # defaults but are exposed here so they can be tuned per env
+            # without rebuilding the image.
+            - name: APP_HOST
+              value: "0.0.0.0"
+            - name: APP_PORT
+              value: "8000"
+
+            - name: GEMINI_API_KEY
+              value: ${GEMINI_API_KEY}
+            - name: GEMINI_MODEL
+              value: ${GEMINI_MODEL}
+
+            # Summarization chunking knobs — short docs go in one call,
+            # long ones get split into ${SUMMARY_CHUNK_SIZE_CHARS}-char
+            # chunks summarized in parallel (bounded by MAX_CONCURRENT).
+            - name: SUMMARY_CHUNK_THRESHOLD_CHARS
+              value: "${SUMMARY_CHUNK_THRESHOLD_CHARS}"
+            - name: SUMMARY_CHUNK_SIZE_CHARS
+              value: "${SUMMARY_CHUNK_SIZE_CHARS}"
+            - name: SUMMARY_MAX_CONCURRENT_CHUNKS
+              value: "${SUMMARY_MAX_CONCURRENT_CHUNKS}"
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            # Worker is mostly an HTTP wrapper around Gemini calls — keeps
+            # very little state in memory. Generous CPU limit to absorb
+            # fan-out summary bursts (up to MAX_CONCURRENT_CHUNKS at once).
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "750m"
+              memory: "512Mi"

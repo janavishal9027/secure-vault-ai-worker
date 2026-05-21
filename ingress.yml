@@ -1,0 +1,34 @@
+# Traefik Middleware strips the /ai-worker prefix so the FastAPI app,
+# which exposes /summarize at the root, can stay path-agnostic.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: ${APP_NAME}-stripprefix
+spec:
+  stripPrefix:
+    prefixes:
+      - /ai-worker
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${APP_NAME}-ingress
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: ${KUBE_NAMESPACE}-${APP_NAME}-stripprefix@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: ${INGRESS_HOST}
+      http:
+        paths:
+          # /ai-worker/* beats the UI's "/" by most-specific match. The
+          # StripPrefix middleware turns /ai-worker/summarize into
+          # /summarize before forwarding to the pod.
+          - path: /ai-worker
+            pathType: Prefix
+            backend:
+              service:
+                name: ${APP_NAME}-service
+                port:
+                  number: 8000

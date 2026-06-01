@@ -3,6 +3,15 @@
 # Learn more about .gitignore:
 #     https://www.atlassian.com/git/tutorials/saving-changes/gitignore
 
+# Environment files / secrets — never commit these
+.env
+.env.*
+!.env.example
+
+# Python virtual environment
+.venv/
+venv/
+
 # Node artifact files
 node_modules/
 dist/

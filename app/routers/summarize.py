@@ -14,7 +14,7 @@ async def summarize(request: SummarizeRequest) -> SummarizeResponse:
     try:
         summary, model = await summarize_text(request.title, request.content)
     except Exception as exc:
-        log.exception("gemini summarization failed for note %s", request.note_id)
+        log.exception("summarization failed for note %s", request.note_id)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"summarization failed: {exc}",

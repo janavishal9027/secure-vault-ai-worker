@@ -1,15 +1,40 @@
 import asyncio
 import logging
 
-from google import genai
-from google.genai import types
+from openai import AsyncOpenAI
 
 from app.chunking import split_into_chunks
 from app.config import settings
 
 log = logging.getLogger(__name__)
 
-_client = genai.Client(api_key=settings.gemini_api_key)
+OPENAI_CALL_TIMEOUT_SECONDS = 60.0
+
+_client: AsyncOpenAI | None = None
+
+
+def _get_client() -> AsyncOpenAI:
+    global _client
+    if _client is None:
+        if not settings.openai_api_key:
+            raise RuntimeError(
+                "OPENAI_API_KEY is not configured. Set it in ai-worker/.env."
+            )
+
+        # OpenRouter requires these optional headers; harmless on api.openai.com.
+        default_headers = {}
+        if "openrouter.ai" in settings.openai_base_url:
+            default_headers["HTTP-Referer"] = "http://localhost:3000"
+            default_headers["X-Title"] = settings.openai_app_title
+
+        _client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+            timeout=OPENAI_CALL_TIMEOUT_SECONDS,
+            default_headers=default_headers or None,
+        )
+    return _client
+
 
 SUMMARIZE_SYSTEM_PROMPT = (
     "You are a concise note-summarization assistant. "
@@ -33,8 +58,8 @@ REDUCE_SYSTEM_PROMPT = (
 
 async def summarize_text(title: str | None, content: str) -> tuple[str, str]:
     if len(content) <= settings.summary_chunk_threshold_chars:
-        summary = await _call_gemini(SUMMARIZE_SYSTEM_PROMPT, _build_titled(title, content))
-        return summary, settings.gemini_model
+        summary = await _call_llm(SUMMARIZE_SYSTEM_PROMPT, _build_titled(title, content))
+        return summary, settings.openai_model
 
     chunks = split_into_chunks(content, settings.summary_chunk_size_chars)
     log.info("summarizing %d chunks in parallel (content=%d chars)", len(chunks), len(content))
@@ -43,28 +68,28 @@ async def summarize_text(title: str | None, content: str) -> tuple[str, str]:
 
     async def summarize_one(chunk: str) -> str:
         async with semaphore:
-            return await _call_gemini(CHUNK_SYSTEM_PROMPT, chunk)
+            return await _call_llm(CHUNK_SYSTEM_PROMPT, chunk)
 
     chunk_summaries = await asyncio.gather(*(summarize_one(c) for c in chunks))
 
     joined = "\n\n".join(
         f"Section {i + 1}: {summary}" for i, summary in enumerate(chunk_summaries)
     )
-    final = await _call_gemini(REDUCE_SYSTEM_PROMPT, _build_titled(title, joined))
-    return final, settings.gemini_model
+    final = await _call_llm(REDUCE_SYSTEM_PROMPT, _build_titled(title, joined))
+    return final, settings.openai_model
 
 
 def _build_titled(title: str | None, body: str) -> str:
     return f"Title: {title}\n\nContent:\n{body}" if title else f"Content:\n{body}"
 
 
-async def _call_gemini(system_prompt: str, user_content: str) -> str:
-    response = await _client.aio.models.generate_content(
-        model=settings.gemini_model,
-        contents=user_content,
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=0.3,
-        ),
+async def _call_llm(system_prompt: str, user_content: str) -> str:
+    response = await _get_client().chat.completions.create(
+        model=settings.openai_model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=0.3,
     )
-    return response.text.strip()
+    return (response.choices[0].message.content or "").strip()

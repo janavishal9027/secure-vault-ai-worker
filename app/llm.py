@@ -8,7 +8,7 @@ from app.config import settings
 
 log = logging.getLogger(__name__)
 
-OPENAI_CALL_TIMEOUT_SECONDS = 60.0
+GEMINI_CALL_TIMEOUT_SECONDS = 60.0
 
 _client: AsyncOpenAI | None = None
 
@@ -16,22 +16,18 @@ _client: AsyncOpenAI | None = None
 def _get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
-        if not settings.openai_api_key:
+        if not settings.gemini_api_key:
             raise RuntimeError(
-                "OPENAI_API_KEY is not configured. Set it in ai-worker/.env."
+                "GEMINI_API_KEY is not configured. Set it in ai-worker/.env."
             )
 
-        # OpenRouter requires these optional headers; harmless on api.openai.com.
-        default_headers = {}
-        if "openrouter.ai" in settings.openai_base_url:
-            default_headers["HTTP-Referer"] = "http://localhost:3000"
-            default_headers["X-Title"] = settings.openai_app_title
-
+        # Gemini speaks the OpenAI Chat Completions API at its compat endpoint,
+        # so the standard AsyncOpenAI client works as-is — just point it at the
+        # Gemini base URL with the Gemini key.
         _client = AsyncOpenAI(
-            api_key=settings.openai_api_key,
-            base_url=settings.openai_base_url,
-            timeout=OPENAI_CALL_TIMEOUT_SECONDS,
-            default_headers=default_headers or None,
+            api_key=settings.gemini_api_key,
+            base_url=settings.gemini_base_url,
+            timeout=GEMINI_CALL_TIMEOUT_SECONDS,
         )
     return _client
 
@@ -59,7 +55,7 @@ REDUCE_SYSTEM_PROMPT = (
 async def summarize_text(title: str | None, content: str) -> tuple[str, str]:
     if len(content) <= settings.summary_chunk_threshold_chars:
         summary = await _call_llm(SUMMARIZE_SYSTEM_PROMPT, _build_titled(title, content))
-        return summary, settings.openai_model
+        return summary, settings.gemini_model
 
     chunks = split_into_chunks(content, settings.summary_chunk_size_chars)
     log.info("summarizing %d chunks in parallel (content=%d chars)", len(chunks), len(content))
@@ -76,7 +72,7 @@ async def summarize_text(title: str | None, content: str) -> tuple[str, str]:
         f"Section {i + 1}: {summary}" for i, summary in enumerate(chunk_summaries)
     )
     final = await _call_llm(REDUCE_SYSTEM_PROMPT, _build_titled(title, joined))
-    return final, settings.openai_model
+    return final, settings.gemini_model
 
 
 def _build_titled(title: str | None, body: str) -> str:
@@ -85,7 +81,7 @@ def _build_titled(title: str | None, body: str) -> str:
 
 async def _call_llm(system_prompt: str, user_content: str) -> str:
     response = await _get_client().chat.completions.create(
-        model=settings.openai_model,
+        model=settings.gemini_model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
